@@ -279,7 +279,7 @@ def train(tracker, train_loader, model, criterion, optimizer, scheduler, num_cla
     train_metrics = create_metrics_dict(num_classes)
 
     # for batch_index, data in enumerate(tqdm(train_loader, desc=f'Iterating train batches with {device.type}')):
-    for batch_index, data in enumerate(tracker.track(train_loader, 'trn batch')):
+    for batch_index, data in enumerate(tracker.track(train_loader, 'batch')):
         # loggingdebug()o(f'{len(data["index"].tolist())}   Images = {data["index"].tolist()}')
         tracker.add_stat('samples', data["index"].tolist(), task='batch')
         progress_log.open('a', buffering=1).write(tsv_line(ep_idx, 'trn', batch_index, len(train_loader), time.time()))
@@ -351,7 +351,7 @@ def train(tracker, train_loader, model, criterion, optimizer, scheduler, num_cla
     if train_metrics["loss"].avg is not None:
         logging.info(f'Training Loss: {train_metrics["loss"].avg:.4f}')
         tracker.add_stat('trn loss', train_metrics["loss"].avg, task='epoch')
-    tracker.notify_end('trn batch')
+    tracker.notify_end('batch')
     return train_metrics
 
 
@@ -378,7 +378,7 @@ def evaluation(tracker, eval_loader, model, criterion, num_classes, batch_size, 
     model.eval()
 
     # for batch_index, data in enumerate(tqdm(eval_loader, dynamic_ncols=True, desc=f'Iterating {dataset} ')):
-    for batch_index, data in enumerate(tracker.track(eval_loader, 'val batch')):
+    for batch_index, data in enumerate(tracker.track(eval_loader, 'batch')):
         logging.debug(f'{len(data["index"].tolist())}   Images = {data["index"].tolist()}')
         tracker.add_stat('samples', data["index"].tolist(), task='batch')
         progress_log.open('a', buffering=1).write(tsv_line(ep_idx, dataset, batch_index, len(eval_loader), time.time()))
@@ -445,7 +445,9 @@ def evaluation(tracker, eval_loader, model, criterion, num_classes, batch_size, 
                                                      ignore_index=eval_loader.dataset.dontcare)
 
             logging.debug(OrderedDict(dataset=dataset, loss=f'{eval_metrics["loss"].avg:.4f}'))
-            tracker.add_stats({'dataset' : dataset, 'loss' : f'{eval_metrics["loss"].avg:.4f}'}, task='batch')
+            tracker.add_stats({'dataset' : dataset,
+                               'loss' : f'{eval_metrics["loss"].avg:.4f}'},
+                              task='batch')
 
             if debug and device.type == 'cuda':
                 res, mem = gpu_stats(device=device.index)
@@ -455,6 +457,7 @@ def evaluation(tracker, eval_loader, model, criterion, num_classes, batch_size, 
                                    'gpu_perc':f'{res.gpu} %',
                                    'gpu_RAM' :f'{mem.used/(1024**2):.0f}/{mem.total/(1024**2):.0f}MB'},
                                    task='batch')
+    tracker.notify_end('batch')
 
     logging.info(f"{dataset} Loss: {eval_metrics['loss'].avg}")
     tracker.add_stat('val loss', eval_metrics['loss'].avg, task='epoch')
@@ -468,7 +471,9 @@ def evaluation(tracker, eval_loader, model, criterion, num_classes, batch_size, 
         tracker.add_stat('recall', eval_metrics['recall'].avg, task='epoch')
         tracker.add_stat('fscore', eval_metrics['fscore'].avg, task='epoch')
         tracker.add_stat('iou', eval_metrics['iou'].avg, task='epoch')
-    tracker.notify_end('val batch')
+        print(eval_metrics['iou'].avg)
+
+        tracker.note(f"{eval_metrics['precision'].avg}\t\t{eval_metrics['recall'].avg}\t\t{eval_metrics['fscore'].avg}\t\t{eval_metrics['iou'].avg}")
 
     return eval_metrics
 
@@ -729,22 +734,7 @@ def main(params, config_path):
     filename = output_path.joinpath('checkpoint.pth.tar')
     # endregion
 
-    tracker = Tracking_Pane(output_path,
-                            mode='trn_seg',
-                            stats_to_track = {'epoch' : ['save_check',
-                                                         'iou',
-                                                         'val loss',
-                                                         'trn loss',
-                                                         'precision',
-                                                         'recall',
-                                                         'fscore'],
-                                              'batch' : ['loss',
-                                                         'lr',
-                                                         'dataset',
-                                                         'device',
-                                                         'gpu_perc',
-                                                         'gpu_RAM',
-                                                         ['samples', 20]]})
+    tracker = Tracking_Pane(output_path, mode='trn_seg')
 
     # region VISUALIZATION: generate pngs of inputs, labels and outputs
     vis_batch_range = get_key_def('vis_batch_range', params['visualization'], None)
@@ -887,6 +877,7 @@ def main(params, config_path):
 
 
 if __name__ == '__main__':
+    torch.cuda.empty_cache()
     print(f'Start\n')
     torch.cuda.empty_cache()
     parser = argparse.ArgumentParser(description='Training execution')

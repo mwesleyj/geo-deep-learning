@@ -57,6 +57,7 @@ def image_reader_as_array(input_image,
             logging.exception(f'Problem clipping raster with geopackage {clip_gpkg}')
             np_array = input_image.read()
     else:
+        coords = None
         np_array = input_image.read()
 
     np_array = np.moveaxis(np_array, 0, -1)  # send channels last

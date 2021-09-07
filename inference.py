@@ -129,6 +129,8 @@ def segmentation(img_array,
                 augmented_output = model(augmented_input)
                 if isinstance(augmented_output, OrderedDict) and 'out' in augmented_output.keys():
                     augmented_output = augmented_output['out']
+                elif isinstance(augmented_output, tuple):
+                    augmented_output = augmented_output[0]
                 logging.debug(f'Shape of augmented output: {augmented_output.shape}')
                 # reverse augmentation for outputs
                 deaugmented_output = transformer.deaugment_mask(augmented_output)
@@ -222,6 +224,8 @@ def classifier(params, img_list, model, device, working_folder):
         with torch.no_grad():
             img = img.to(device)
             outputs = model(img)
+            if isinstance(outputs, tuple): # todo: why no if dict here too?
+                outputs = outputs[0]
             _, predicted = torch.max(outputs, 1)
 
         top5 = heapq.nlargest(5, outputs.cpu().numpy()[0])
@@ -303,9 +307,18 @@ def main(params: dict):
         logfile = f'{working_folder}/info.log'
         logfile_debug = f'{working_folder}/debug.log'
         console_level_logging = 'INFO' if not debug else 'DEBUG'
-        logging.config.fileConfig(log_config_path, defaults={'logfilename': logfile,
-                                                             'logfilename_debug': logfile_debug,
-                                                             'console_level': console_level_logging})
+        if params['global']['my_comp']:
+            # logfile = f'{"D:/NRCan_data/MECnet_implementation/runs/"}/{model_id}.log'
+            # logfile_debug = f'{"D:/NRCan_data/MECnet_implementation/runs/"}/{model_id}_debug.log'
+            logfile = f'{"D:/NRCan_data/MECnet_implementation/runs/"}/info.log'
+            logfile_debug = f'{"D:/NRCan_data/MECnet_implementation/runs/"}/debug.log'
+            logging.config.fileConfig(log_config_path, defaults={'logfilename': logfile,
+                                                                 'logfilename_debug': logfile_debug,
+                                                                 'console_level': console_level_logging})
+        else:
+            logging.config.fileConfig(log_config_path, defaults={'logfilename': logfile,
+                                                                 'logfilename_debug': logfile_debug,
+                                                                 'console_level': console_level_logging})
 
         # import only if mlflow uri is set
         from mlflow import log_params, set_tracking_uri, set_experiment, start_run, log_artifact, log_metrics
@@ -432,7 +445,7 @@ def main(params: dict):
                                                           f"{img_name.split('.')[0]}_inference.tif")
             with rasterio.open(local_img, 'r') as raster:
                 logging.info(f'Reading image as array: {raster.name}')
-                img_array, raster, _ = image_reader_as_array(input_image=raster, clip_gpkg=local_gpkg)
+                img_array, raster, _, coords = image_reader_as_array(input_image=raster, clip_gpkg=local_gpkg)
                 if debug:
                     logging.debug(f'Unique values in loaded raster: {np.unique(img_array)}\n'
                                   f'Shape of raster: {img_array.shape}')
@@ -495,6 +508,7 @@ def main(params: dict):
 
 
 if __name__ == '__main__':
+    torch.cuda.empty_cache()
     print('\n\nStart:\n\n')
     parser = argparse.ArgumentParser(usage="%(prog)s [-h] [-p YAML] [-i MODEL IMAGE] ",
                                      description='Inference and Benchmark on images using trained model')

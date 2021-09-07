@@ -50,223 +50,194 @@ class Tracking_Pane(Progress):
         - mode: str = "trn_seg" or "im_to_samp"
 
         - stats_to_track:
-                          dict{ task : [column_title,
-                                        column_title,
-                                        [column_title, custom_indent_size],     NOTE: default indent = 12
-                                        column_title,
+                          dict{ task : [stat_title,
+                                        stat_title,
+                                        [stat_title, custom_indent_size ],     NOTE: default indent = 12
+                                        [stat_title, track_stat_inLoop_flag ], NOTE: def method is to use .add_stat(...)
                                         etc...],
                                 etc...}
 
     '''
-    def __init__(self, dir_path, mode=None, stats_to_track={'epoch' : [], 'batch' : []}):
+    def __init__(self, dir_path, mode=None, stats_to_track=None):
 
-        # region INITS
+        # mode specific inits
+        if mode==None and stats_to_track != None:
+            pass
+        elif mode not in ['trn_seg', 'im_to_samp', 'inf']:
+            raise NotImplementedError(f'please select a valid mode (ur choices = ["trn_seg", "im_to_samp", "inf"])')
+
+        elif mode == 'trn_seg':
+            stats_to_track = {'epoch' : ['save_check',
+                                         'iou',
+                                         'val loss',
+                                         'trn loss',
+                                         'precision',
+                                         'recall',
+                                         'fscore'],
+                              'batch' : ['dataset',
+                                         ['epoch', True], # flag denoting this stat is tracked by tracker.track(...)
+                                                                                  # instead of tracker.add_stat(...)
+                                         'loss',
+                                         'gpu_perc',
+                                         'gpu_RAM',
+                                         'device',
+                                         ['samples', 20], # specific indent size
+                                         'lr']}
+
+        elif mode == 'im_to_samp':
+            stats_to_track = {'csv' : ['gpkg',
+                                       'img',
+                                       'size']}
+
+        elif mode == 'inf':
+            raise NotImplementedError('TODO: if this is not MATT looking at this ...very sorry')
+        else:
+            raise NotImplementedError('sorry, please enter a valid mode, ')
+
+
 
         # general inits
         self.dir = dir_path
-        if mode not in ['trn_seg', 'im_to_samp']:
-            raise NotImplementedError(f'please select a valid mode (ur choices = ["trn_seg", "im_to_samp"])')
-        self.mode = mode
+        self.mode = mode # todo: I can prob remove this now
         self.start_time = {}
 
         # init stat dictionaries
         self.stats = {}
-        self.stat_cols = {}
+        self.stat_titles = {}
         self.stat_indents = {}
+        self.track_stat_inLoop = []
         for task in stats_to_track:
             self.stats[task] = {}
-            self.stat_cols[task] = []
+            self.stat_titles[task] = []
             self.stat_indents[task] = []
 
-            # add column_titles & default indent size
-            self.stat_cols[task] += stats_to_track[task]
+            # add column titles (just the basics)
+            self.stat_titles[task] += stats_to_track[task]
             self.stat_indents[task] += [12] * len(stats_to_track[task])
 
-            # check for specified indent sizes
-            for c in range(len(self.stat_cols[task])):
-                if isinstance(self.stat_cols[task][c], list):
-                    self.stat_indents[task][c] = self.stat_cols[task][c][1]
-                    self.stat_cols[task][c] = self.stat_cols[task][c][0]
+            # check for specified params in each column title
+            for c in range(len(self.stat_titles[task])):
+                if isinstance(self.stat_titles[task][c], list):
+                    for item in self.stat_titles[task][c][1:]:
+                        if isinstance(item, bool):  # whether or not to track stats used in for loops tracker.track(...)
+                            self.track_stat_inLoop.append([task, self.stat_titles[task][c][0]])
+                        elif isinstance(item, int):   # indent sizes
+                            self.stat_indents[task][c] = item
+                    # self.stat_titles[task][c] = self.stat_titles[task][c][1]
+                    self.stat_titles[task][c] = self.stat_titles[task][c][0] # set the stat column title (str)
 
-        # mode specific inits
-        if self.mode == 'trn_seg':
-            self.curr_epoch = 0
-
-            if 'save_check' not in stats_to_track['epoch']:
-                # self.stat_cols[task]['save_check'] = 12                              # TODO: abstact away to any pls!
-                self.stat_cols[task].insert(0, 'save_check')
-                self.stat_indents[task].insert(0, 12)
-        # endregion
+            # insert the task itself into the column titles
+            self.stat_titles[task].insert(0, task)
+            self.stat_indents[task].insert(0, 12)
 
         # create files
-        if self.mode == 'trn_seg':
-            for file_type in ['per_epoch_all.csv', 'per_epoch_checkpoints.csv', 'per_batch.csv', 'live.txt']:
-                with open(self.dir / file_type, 'a') as file:
+        with open(self.dir / 'live.txt', 'a') as file:
+            file.write('               curr     total    |     time elapsed      est. time remain    est. total time\n\n')
 
-                    if file_type == 'live.txt':
-                        file.writelines(('               curr     total    |     time elapsed      est. time remain    est. total time\n',
-                                         # 'epoch       :\n',
-                                         # 'trn batch   :\n',
-                                         # 'val batch   :\n',
-                                         '\n'))
-                        pass
+        for num, task in enumerate(stats_to_track):
+            with open(self.dir / f'per_{task}.csv', 'a') as file:
 
-                    elif file_type == 'per_batch.csv':
-                        titles = 'epoch #, dataset, batch #, '
-                        task = 'batch'
-                    elif file_type[:9] == 'per_epoch':
-                        titles = 'epoch #, '
-                        task = 'epoch'
+                titles = ''
+                for t, tit in enumerate(self.stat_titles[task]):
+                    titles += f"{tit},{' ' * (self.stat_indents[task][t]  - len(tit))}"
+                titles += 'time elapsed,     est. time remain,   est. total time\n'
+                file.writelines((titles, '\n'))
 
-                    for c, col in enumerate(self.stat_cols[task]):
-                        titles += f"{col},{' ' * (self.stat_indents[task][c]  - len(col))}"
-                    titles += 'time elapsed,     est. time remain,   est. total time\n'
-                    file.writelines((titles, '\n'))
-                                                                                                        # TODO: for batch & epochs, add in the total!
-        elif self.mode == 'im_to_samp':
-            raise NotImplementedError('TODO if this is not MATT looking at this ...very sorry')
+
 
 
     def track(self, seq, task):
-        #add tdqm track
-        for num, value in enumerate(seq):
-            self.note(f'flag!!\t{num}\t{task}\n{self.stats}\n\n' * 25)
-            if self.mode == 'trn_seg':
+        # todo: add rich & tdqm track opts
+        for num, value in enumerate(seq): # TODO!!! should we have 0/39 OR 1/40 ???
+            # self.note(f'flag!!\t{num}\t{task}\n{self.stats}\n\n' * 25)
 
-                # region timers
-                if num == 0: # reset timer & avoid div0 errors
-                    print('-'*40)
-                    print('\t\t', 'STARTING\t', task)
-                    print('-'*40)
+            # timers
+            if num == 0: # reset timer & avoid div0 errors
+                print('-'*40)
+                print('\t\t', 'STARTING\t', task)
+                print('-'*40)
 
-                    self.start_time[task] = time.time()
-                    time_curr = 0
-                    time_total = 0
-                    time_remain = 0
-                else:
-                    time_curr = time.time() - self.start_time[task]
-                    time_total = time_curr / num * (len(seq)-1)
-                    time_remain = (time_total - time_curr)
-                # endregion
+                self.start_time[task] = time.time()
+                time_curr = 0
+                time_total = 0
+                time_remain = 0
+            else:
+                time_curr = time.time() - self.start_time[task]
+                time_total = time_curr / num * (len(seq)-1)
+                time_remain = (time_total - time_curr)
 
-                # region per_batch.csv
-                if task[4:] == 'batch' and num > 0 and len(self.stats['batch']) > 0:
-                    row = f"{self.curr_epoch},{' '*(8 - len(str(self.curr_epoch)))}"   # TODO put in len(epoch) & len(task) in the csvs
-                    row += f"{task[:3]},{' '*(8 - len(task[:3]))}"
-                    row += f"{num-1},{' '*(8 - len(str(num-1)))}"
+                # add to file
+                self.add_stat(task, f'{num-1} / {len(seq)-1}', task=task) # add curr loop
+                row = self.make_csv_row(task,
+                                        time_curr,
+                                        time_remain,
+                                        time_total)
+                with open(self.dir / f'per_{task}.csv', 'a') as file:
+                    file.write(row)
 
-                    row = self.make_csv_row(task[4:],
-                                            time_curr,
-                                            time_remain,
-                                            time_total,
-                                            row=row)
-                    with open(self.dir / 'per_batch.csv', 'a') as file:
-                        file.write(row)
+                self.__clear_stats(task)
 
-                    self.stats[task] = {}
-                # endregion
+            # region add to live.txt file
+            with open(self.dir / 'live.txt', 'r') as file:
+                data = file.readlines()
 
-                # region per_epoch.csv
+            EXISTS = False
+            for d in range(len(data)):
 
-                elif task == 'epoch' and num > 0 and len(self.stats['epoch']) > 0:
+                if data[d][:len(task)] == task:
+                    index = d
+                    EXISTS = True
+                    break
 
-                    self.curr_epoch = num
+            if not EXISTS:
+                index = len(data)
+                data.append('')
 
-                    row = f"{num-1},{' '*(8-len(str(num-1)))}"
+            time_remain = f"{(time_remain / 60):.0f}m " \
+                          f"{(time_remain % 60):.0f}s"
+            time_curr = f"{(time_curr / 60):.0f}m " \
+                        f"{(time_curr % 60):.0f}s"
+            time_total = f"{(time_total / 60):.0f}m " \
+                         f"{(time_total % 60):.0f}s"
+            data[index] = f"{task}{' '*(12-len(task))}:   " \
+                          f"{num}{' '*(4-len(str(num)))} /   " \
+                          f"{len(seq)}{' '*(4-len(str(len(seq))))}           " \
+                          f"{time_curr}{' '*(12-len(time_curr))}         " \
+                          f"{time_remain}{' '*(12-len(time_remain))}        " \
+                          f"{time_total}{' '*(12-len(time_total))}        " \
+                          f"\n"
 
-                    row = self.make_csv_row(task,
-                            time_curr,
-                            time_remain,
-                            time_total,
-                            row=row)
-                    with open(self.dir / 'per_epoch_all.csv', 'a') as file:
-                        file.write(row)
-                    # self.note('yeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeees??')
-                    # self.note(self.stats)
-                    if 'save_check' in self.stats[task]:
-                        # self.note('YAYAYAYAYAYAYAYAYAYAYAYAYAYAYAYAYAYAYAYAYAYAYS')
-                        with open(self.dir / 'per_epoch_checkpoints.csv', 'a') as file:
-                            file.write(row)
+            data = data[:index+1] # reset lower other vals for next time
+            # TODO: just remove the curr value? do we need to delete all the vals - or try putting the '-> ' arrow at the start again
 
-                    self.stats[task] = {}
-                # endregion
+            # print(data[0], data[index])
+            # self.print(data[0], data[index])
 
-                # region add to live.txt file
-                with open(self.dir / 'live.txt', 'r') as file:
-                    data = file.readlines()
+            with open(self.dir / 'live.txt', 'w') as file:
+                file.writelines(data)       # todo: except possible file writing errs!!!
 
-                EXISTS = False
-                for d in range(len(data)):
-                    
-                    if data[d][:len(task)] == task:
-                        index = d
-                        EXISTS = True
-                        break
+            # endregion
 
-                if not EXISTS:
-                    index = len(data)
-                    data.append('')
-
-                time_remain = f"{(time_remain / 60):.0f}m " \
-                              f"{(time_remain % 60):.0f}s"
-                time_curr = f"{(time_curr / 60):.0f}m " \
-                            f"{(time_curr % 60):.0f}s"
-                time_total = f"{(time_total / 60):.0f}m " \
-                             f"{(time_total % 60):.0f}s"
-                data[index] = f"{task}{' '*(12-len(task))}:   " \
-                              f"{num+1}{' '*(4-len(str(num+1)))} /   " \
-                              f"{len(seq)}{' '*(4-len(str(len(seq))))}           " \
-                              f"{time_curr}{' '*(12-len(time_curr))}         " \
-                              f"{time_remain}{' '*(12-len(time_remain))}        " \
-                              f"{time_total}{' '*(12-len(time_total))}        " \
-                              f"\n"
-
-                data = data[:index+1] # reset lower other vals for next time
-                # TODO: just remove the curr value? do we need to delete all the vals - or try putting the '-> ' arrow at the start again
-
-                # print(data[0], data[index])
-                # self.print(data[0], data[index])
-
-                with open(self.dir / 'live.txt', 'w') as file:
-                    file.writelines(data)       # todo: except possible file writing errs!!!
-
-                self.stats[task] = {}
-                # endregion
+            for stat_info in self.track_stat_inLoop:
+                if task == stat_info[1]: # 1=name of stat
+                    self.add_stat(stat_info[1], f'{num} / {len(seq)-1}', task=stat_info[0]) # 0=task that tracks the stat
 
             yield value
-
-    def make_csv_row(self, # TODO: documentation!
-                     task,
-                     time_curr,
-                     time_remain,
-                     time_total,
-                     row=''):
+    # TODO: documentation!
+    def make_csv_row(self, task, time_curr, time_remain, time_total, row=''):
                                                                                                 # TODO! it curr doesnt save the stats of the last in seq!!!
-        # region add cols to row
-        for c, col in enumerate(self.stat_cols[task]) :
-
-            # self.note(task)
-            # self.note(col)
-            # self.note(self.stat_cols)
-            # self.note(self.stat_cols[task])
+        # region add stats to row
+        for t, tit in enumerate(self.stat_titles[task]) :
             try:
-                # self.note('---')
-                # self.note(self.stats)
-                # self.note(self.stats[task])
-                # self.note('')
-                # self.note('---')
-                # self.note(self.stats[task][col])
-                # self.note('---')
-                stat = self.stats[task][col]
+                stat = self.stats[task][tit]
                 try:
-                    stat = f"{stat:.3f}"
+                    stat = f"{stat:.5f}" # todo: allow formating? f'{}'.format(...)
                 except (ValueError, TypeError):
-                    stat = f"{stat}"                # self.stat_cols[task][col] => indent
-                # self.note(self.stat_indents[task])
-                # self.note(self.stat_indents[task][c])
-                row += f"{stat},{' ' * (self.stat_indents[task][c] - len(stat))}"            # TODO: for batch & epochs, add in the total! (ex = if col=='total' len(seq))
+                    stat = f"{stat}"                # self.stat_title[task][col] => indent
+                stat = stat.replace(',', '')
+                row += f"{stat},{' ' * (self.stat_indents[task][t] - len(stat))}"            # TODO: for batch & epochs, add in the total! (ex = if col=='total' len(seq))
             except KeyError: # if a stat has not been added for this row
-                row += ',' + ' ' * self.stat_indents[task][c]                                # TODO: fix if they are too big, add space in column
+                row += ',' + ' ' * self.stat_indents[task][t]                                # TODO: fix if they are too big, add space in column
         # endregion
 
         # region timers
@@ -283,6 +254,31 @@ class Tracking_Pane(Progress):
 
         return row
 
+    def notify_end(self, task):
+        print('-'*36)
+        print('\t\t', task, '\tENDED')
+        print('-'*36)
+
+        # region timers
+        time_curr = time.time() - self.start_time[task]
+        time_total = time_curr
+        time_remain = 0
+        # endregion
+
+        # region add to file
+        # todo: get previous num in seq, +1, add back to stats OR get self.len(seq) ?
+        # with open(self.dir / 'per_batch.csv', 'r') as file:
+        #     #         last_line = file.readlines()[-1][:20].replace(' ', ',').split(',')
+        row = self.make_csv_row(task,
+                                time_curr,
+                                time_remain,
+                                time_total)
+        with open(self.dir / f'per_{task}.csv', 'a') as file:
+            file.write(row)
+
+        self.__clear_stats(task)
+        # endregion
+
     def add_stat(self, key, stat, task='epoch'):
         self.stats[task][key] = stat
     # TODO: when add_stat() check that these are part of the dict
@@ -290,63 +286,12 @@ class Tracking_Pane(Progress):
         for key in stats:
             self.stats[task][key] = stats[key] # todo: can this be 'vectoried' or atleast not looped?
 
-    def notify_end(self, task):
-        print('-'*36)
-        print('\t\t', task, '\tENDED')
-        print('-'*36)
-
-        if self.mode == 'trn_seg':
-
-            # region timers
-            time_curr = time.time() - self.start_time[task]
-            time_total = time_curr
-            time_remain = 0
-            # endregion
-
-            # region per_batch.csv
-            if task == 'batch':
-                with open(self.dir / 'per_batch.csv', 'r') as file:
-                    last_line = file.readlines()[-1][:20].replace(' ', ',').split(',')
-                    last_epoch, last_dataset, last_batch = [l for l in last_line if (l != ',') or (l != ' ')]
-
-                row = f"{last_epoch},{' ' * (8 - len(str(last_epoch)))}"
-                row += f"{last_dataset},{' ' * (8 - len(last_dataset))}"
-                row += f"{last_batch},{' ' * (8 - len(str(last_batch)))}"
-
-                row = self.make_csv_row(task,
-                                        time_curr,
-                                        time_remain,
-                                        time_total,
-                                        row=row)
-                with open(self.dir / 'per_batch.csv', 'a') as file:
-                    file.write(row)
-
-                self.stats[task] = {}
-            # endregion
-
-            # region per_epoch.csv
-            elif task == 'epoch':
-                with open(self.dir / 'per_epoch.csv', 'r') as file:
-                    last_epoch = file.readlines()[-1][:20].replace(' ', ',').split(',')[0]
-
-                row = f"{last_epoch+1},{' ' * (8 - len(str(last_epoch+1)))}"
-
-                row = self.make_csv_row(task,
-                                        time_curr,
-                                        time_remain,
-                                        time_total,
-                                        row=row)
-
-                with open(self.dir / 'per_epoch_all.csv', 'a') as file:
-                    file.write(row)
-                if 'save_check' in self.stats:
-                    with open(self.dir / 'per_epoch_checkpoints.csv', 'a') as file:
-                        file.write(row)
-
-                self.stats[task] = {}
-            # endregion
-
-
+    def __clear_stats(self, task):
+        save_me = {}
+        for stat_info in self.track_stat_inLoop:
+            if stat_info[1] in self.stats[task]: # 1=name of stat
+                save_me[stat_info[1]] = self.stats[task][stat_info[1]]
+        self.stats[task] = save_me
 
     def note(self, line, end='\n'):
         # TODO: allow for printing things like epoch_num
@@ -355,24 +300,6 @@ class Tracking_Pane(Progress):
             file.write(f'{line}')
             file.write(end)
 
-    # def print(self, *objects):
-    #         # if style == 'thick panel':
-    #     width = 0
-    #     for obj in objects:
-    #         if len(str(obj)) > width:
-    #             width = len(str(obj))
-    #     width += 8
-    #     print('#' * width)
-    #     # print('###' + ' '*(console_width-6) + '###')
-    #     for obj in objects:
-    #         obj = str(obj)
-    #         buffer_size = (width - 8 - len(obj)) // 2
-    #         print('###' + ' ' * buffer_size + obj + ' ' * (buffer_size + len(obj) % 2) + '###')
-    #     # print('###' + ' '*(console_width-6) + '###')
-    #     print('#' * width)
-    #         # else:
-    #         #     print(*objects)
-
 
 if __name__ == '__main__':
     batches = [[0, 1, 2, 3, 55],
@@ -380,8 +307,7 @@ if __name__ == '__main__':
                [0, 1, 2, 3, 55, 33]]
     tracker = Tracking_Pane('C:/Users/muzwe/Documents/GitHub/geo-deep-learning - MATT/MATTS',
                             mode='trn_seg',
-                            epoch_stats_to_track=['save_check'],
-                            debug=True)
+                            stats_to_track={'epoch' : ['save_check']})
     for i in tracker.track(range(6), 'epoch'):#task_id=0):
         print('epoch', i)
         tracker.add_stat('lol', i)

@@ -22,6 +22,7 @@ from utils.readers import read_parameters, image_reader_as_array
 from utils.verifications import validate_num_classes, validate_raster, assert_crs_match, \
     validate_features_from_gpkg
 
+from utils.tracker_basic import Tracking_Pane
 try:
     import boto3
 except ModuleNotFoundError:
@@ -226,6 +227,7 @@ def samples_preparation(hydro,
     long_per_pxl = (coords['n'] - coords['s']) / h
     lat_per_pxl = (coords['e'] - coords['w']) / w
     # endregion
+
 
 
     with tqdm(range(0, h, dist_samples), position=1, leave=True,
@@ -434,6 +436,7 @@ def main(params):
     samples_folder_name = (f'samples{samples_size}_overlap{overlap}_min-annot{min_annot_perc}_{num_bands}bands'
                            f'_{experiment_name}')
 
+
     # other optional parameters
     dontcare = get_key_def("ignore_index", params["training"], -1)
     meta_map = get_key_def('meta_map', params['global'], default={})
@@ -513,6 +516,8 @@ def main(params):
         dontcare = -1
     # endregion
 
+    tracker = Tracking_Pane(data_path, mode='im_to_samp')
+
     # Assert that all items in target_ids are integers (ex.: single-class samples from multi-class label)
     if targ_ids:
         for item in targ_ids:
@@ -522,6 +527,7 @@ def main(params):
     # region VALIDATION
     # (1) Assert num_classes parameters == num actual classes in gpkg
     # (2) check CRS match (tif and gpkg)
+    # (debug only): Checking validity of features in vector files
     valid_gpkg_set = set()
     for info in tqdm(list_data_prep, position=0):
         validate_raster(info['tif'], num_bands, meta_map)
@@ -534,13 +540,14 @@ def main(params):
             assert_crs_match(info['tif'], info['gpkg'])
             valid_gpkg_set.add(info['gpkg'])
 
-    if debug:
-        # VALIDATION (debug only): Checking validity of features in vector files
-        for info in tqdm(list_data_prep, position=0, desc=f"Checking validity of features in vector files"):
+        if debug:
+        # for info in tqdm(list_data_prep, position=0, desc=f"Checking validity of features in vector files"):
             # TODO: make unit to test this with invalid features.
             invalid_features = validate_features_from_gpkg(info['gpkg'], info['attribute_name'])
             if invalid_features:
                 logging.critical(f"{info['gpkg']}: Invalid geometry object(s) '{invalid_features}'")
+
+        tracker.analyse_file()
     # endregion
 
     # region init dataset & class Variables
@@ -567,6 +574,8 @@ def main(params):
     # (3) prepare samples
     logging.info(f"Preparing samples \n\tSamples_size: {samples_size} \n\tOverlap: {overlap} "
                  f"\n\tValidation set: {val_percent} % of created training samples")
+
+
 
     for rowN, info in enumerate(tqdm(list_data_prep, position=0, leave=False)):
         try:

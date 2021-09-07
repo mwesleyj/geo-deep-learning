@@ -708,18 +708,18 @@ class MECNet(nn.Module):
             return res, o1, o2, o3, o4, o5
 
 
-if __name__ == '__main__':
-    from thop import profile
-    import torchsummary
-    band_num = 3
-    class_num = 1
-    model = MECNet()
-    input = torch.randn(1, 3, 512, 512)
-    # flops, params = profile(model, inputs=(input,))
-    # model.cuda()
-    torchsummary.summary(model, (3,512,512))
-    # print('flops(G): %.3f' % (flops / 1e+9))
-    # print('params(M): %.3f' % (params / 1e+6))
+# if __name__ == '__main__':
+#     from thop import profile
+#     import torchsummary
+#     band_num = 3
+#     class_num = 1
+#     model = MECNet()
+#     input = torch.randn(1, 3, 512, 512)
+#     # flops, params = profile(model, inputs=(input,))
+#     # model.cuda()
+#     torchsummary.summary(model, (3,512,512))
+#     # print('flops(G): %.3f' % (flops / 1e+9))
+#     # print('params(M): %.3f' % (params / 1e+6))
 
 '''
 legend:
